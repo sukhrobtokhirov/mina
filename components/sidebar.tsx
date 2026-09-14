@@ -1,9 +1,19 @@
 "use client";
 
-import { MagnifyingGlass, Plus } from "@phosphor-icons/react";
+import {
+  ArrowLeft,
+  CalendarDot,
+  MagnifyingGlass,
+  Plus,
+  Trash,
+} from "@phosphor-icons/react";
 import { formatUpdated, tagLabel, type Note, type Tag } from "@/lib/db";
 
+export type SidebarView = "notes" | "trash";
+
 type Props = {
+  view: SidebarView;
+  trashCount: number;
   notes: Note[];
   activeId: string | null;
   query: string;
@@ -12,9 +22,13 @@ type Props = {
   onTagFilter: (tag: Tag | "all") => void;
   onSelect: (id: string) => void;
   onCreate: () => void;
+  onToday: () => void;
+  onView: (view: SidebarView) => void;
 };
 
 export function Sidebar({
+  view,
+  trashCount,
   notes,
   activeId,
   query,
@@ -23,19 +37,52 @@ export function Sidebar({
   onTagFilter,
   onSelect,
   onCreate,
+  onToday,
+  onView,
 }: Props) {
+  const emptyText =
+    query.trim() || tagFilter !== "all"
+      ? "No matches."
+      : view === "trash"
+        ? "Trash is empty. Deleted notes land here and can be restored."
+        : "Nothing here yet. Write a note about the day, work, or whatever is sitting with you.";
+
   return (
     <div className="flex h-full min-h-0 flex-col">
       <div className="flex items-center justify-between gap-3 px-4 pt-5 pb-3">
-        <p className="text-[15px] font-semibold tracking-tight text-ink">Notes</p>
-        <button
-          type="button"
-          onClick={onCreate}
-          className="inline-flex h-8 items-center gap-1 rounded-lg bg-ink px-2.5 text-[13px] font-medium text-surface transition-transform duration-150 hover:opacity-90 active:scale-[0.98]"
-        >
-          <Plus size={14} weight="bold" />
-          New
-        </button>
+        <p className="text-[15px] font-semibold tracking-tight text-ink">
+          {view === "trash" ? "Trash" : "Notes"}
+        </p>
+        {view === "trash" ? (
+          <button
+            type="button"
+            onClick={() => onView("notes")}
+            className="inline-flex h-8 items-center gap-1 rounded-lg px-2.5 text-[13px] text-muted hover:bg-raised hover:text-ink"
+          >
+            <ArrowLeft size={14} />
+            Notes
+          </button>
+        ) : (
+          <div className="flex items-center gap-1">
+            <button
+              type="button"
+              onClick={onToday}
+              className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-muted hover:bg-raised hover:text-ink"
+              aria-label="Today's journal"
+              title="Today's journal"
+            >
+              <CalendarDot size={16} />
+            </button>
+            <button
+              type="button"
+              onClick={onCreate}
+              className="inline-flex h-8 items-center gap-1 rounded-lg bg-ink px-2.5 text-[13px] font-medium text-surface transition-transform duration-150 hover:opacity-90 active:scale-[0.98]"
+            >
+              <Plus size={14} weight="bold" />
+              New
+            </button>
+          </div>
+        )}
       </div>
 
       <div className="px-3">
@@ -73,8 +120,7 @@ export function Sidebar({
       <div className="mt-3 min-h-0 flex-1 overflow-y-auto px-2 pb-4">
         {notes.length === 0 ? (
           <p className="px-2 py-8 text-[13px] leading-relaxed text-muted">
-            Nothing here yet. Write a note about the day, work, or whatever is
-            sitting with you.
+            {emptyText}
           </p>
         ) : (
           <ul className="flex flex-col">
@@ -110,6 +156,22 @@ export function Sidebar({
           </ul>
         )}
       </div>
+
+      {view === "notes" ? (
+        <div className="border-t border-line px-2 py-2">
+          <button
+            type="button"
+            onClick={() => onView("trash")}
+            className="flex h-8 w-full items-center gap-2 rounded-lg px-2.5 text-[13px] text-muted hover:bg-raised hover:text-ink"
+          >
+            <Trash size={14} />
+            Trash
+            {trashCount > 0 ? (
+              <span className="ml-auto text-[11px]">{trashCount}</span>
+            ) : null}
+          </button>
+        </div>
+      ) : null}
     </div>
   );
 }

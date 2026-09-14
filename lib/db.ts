@@ -87,6 +87,16 @@ export function formatUpdated(ts: number) {
   return d.toLocaleDateString([], { month: "short", day: "numeric" });
 }
 
+// Fixed locale so every device picks the same title for the same day.
+export function todayTitle(date = new Date()) {
+  return date.toLocaleDateString("en-US", {
+    weekday: "long",
+    month: "long",
+    day: "numeric",
+    year: "numeric",
+  });
+}
+
 export function tagLabel(tag: Tag) {
   if (tag === "journal") return "Journal";
   if (tag === "work") return "Work";
