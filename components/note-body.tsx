@@ -17,13 +17,15 @@ const lowlight = createLowlight(common);
 type Props = {
   noteId: string;
   content: string;
+  editable?: boolean;
   onChange: (json: string, preview: string) => void;
 };
 
-export function NoteBody({ noteId, content, onChange }: Props) {
+export function NoteBody({ noteId, content, editable = true, onChange }: Props) {
   const editor = useEditor(
     {
       immediatelyRender: false,
+      editable,
       shouldRerenderOnTransaction: true,
       extensions: [
         StarterKit.configure({
@@ -63,7 +65,7 @@ export function NoteBody({ noteId, content, onChange }: Props) {
 
   return (
     <div>
-      <SelectionToolbar editor={editor} />
+      {editable ? <SelectionToolbar editor={editor} /> : null}
       <EditorContent editor={editor} />
     </div>
   );

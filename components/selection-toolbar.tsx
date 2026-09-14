@@ -2,10 +2,12 @@
 
 import {
   Code,
+  Highlighter,
   LinkSimple,
   TextB,
   TextItalic,
   TextStrikethrough,
+  TextUnderline,
 } from "@phosphor-icons/react";
 import type { Editor } from "@tiptap/react";
 import { BubbleMenu } from "@tiptap/react/menus";
@@ -60,11 +62,25 @@ export function SelectionToolbar({ editor }: { editor: Editor }) {
         <TextItalic size={15} />
       </Tool>
       <Tool
+        label="Underline"
+        active={editor.isActive("underline")}
+        onClick={() => editor.chain().focus().toggleUnderline().run()}
+      >
+        <TextUnderline size={15} />
+      </Tool>
+      <Tool
         label="Strikethrough"
         active={editor.isActive("strike")}
         onClick={() => editor.chain().focus().toggleStrike().run()}
       >
         <TextStrikethrough size={15} />
+      </Tool>
+      <Tool
+        label="Highlight"
+        active={editor.isActive("highlight")}
+        onClick={() => editor.chain().focus().toggleHighlight().run()}
+      >
+        <Highlighter size={15} />
       </Tool>
       <Tool
         label="Inline code"

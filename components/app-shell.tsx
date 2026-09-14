@@ -1,12 +1,18 @@
 "use client";
 
-import { DownloadSimple, List, Trash, UploadSimple } from "@phosphor-icons/react";
+import {
+  ArrowCounterClockwise,
+  DownloadSimple,
+  List,
+  Trash,
+  UploadSimple,
+} from "@phosphor-icons/react";
 import { liveQuery } from "dexie";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AccountMenu } from "./account-menu";
 import { NoteBody } from "./note-body";
-import { Sidebar } from "./sidebar";
+import { Sidebar, type SidebarView } from "./sidebar";
 import { SyncStatus } from "./sync-status";
 import { ThemeToggle } from "./theme-toggle";
 import { useAuth } from "@/lib/auth";
@@ -15,11 +21,20 @@ import {
   emptyDoc,
   newNote,
   tagLabel,
+  todayTitle,
   type Note,
   type Tag,
 } from "@/lib/db";
 import { exportUserNotes, importUserNotes, parseExport } from "@/lib/import-export";
-import { addNote, saveNoteFields, softDeleteNote } from "@/lib/notes";
+import {
+  addNote,
+  flushNoteSaves,
+  noteBodyText,
+  queueNoteSave,
+  restoreNote,
+  saveNoteFields,
+  softDeleteNote,
+} from "@/lib/notes";
 import { runSync, startSyncForUser, stopSync } from "@/lib/sync";
 
 const SELECTED_KEY = "my-notes:selected";
@@ -27,14 +42,14 @@ const SELECTED_KEY = "my-notes:selected";
 export function AppShell() {
   const { user, ready } = useAuth();
   const router = useRouter();
-  const [notes, setNotes] = useState<Note[] | null>(null);
+  const [rows, setRows] = useState<Note[] | null>(null);
+  const [view, setView] = useState<SidebarView>("notes");
   const [activeId, setActiveId] = useState<string | null>(null);
+  const [trashId, setTrashId] = useState<string | null>(null);
   const [query, setQuery] = useState("");
   const [tagFilter, setTagFilter] = useState<Tag | "all">("all");
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const importRef = useRef<HTMLInputElement>(null);
-  const titleTimer = useRef<number | undefined>(undefined);
-  const bodyTimer = useRef<number | undefined>(undefined);
 
   useEffect(() => {
     if (ready && !user) router.replace("/login");
@@ -52,17 +67,42 @@ export function AppShell() {
   useEffect(() => {
     if (!user) return;
     const userId = user.id;
-    const sub = liveQuery(async () => {
-      const rows = await db.notes.where("userId").equals(userId).toArray();
-      return rows
-        .filter((n) => !n.deletedAt)
-        .sort((a, b) => b.updatedAt - a.updatedAt);
-    }).subscribe({
-      next: setNotes,
+    const sub = liveQuery(() =>
+      db.notes.where("userId").equals(userId).toArray(),
+    ).subscribe({
+      next: setRows,
       error: console.error,
     });
     return () => sub.unsubscribe();
   }, [user]);
+
+  useEffect(() => {
+    const onHide = () => {
+      if (document.visibilityState === "hidden") flushNoteSaves();
+    };
+    window.addEventListener("pagehide", flushNoteSaves);
+    document.addEventListener("visibilitychange", onHide);
+    return () => {
+      window.removeEventListener("pagehide", flushNoteSaves);
+      document.removeEventListener("visibilitychange", onHide);
+    };
+  }, []);
+
+  const notes = useMemo(
+    () =>
+      rows
+        ?.filter((n) => !n.deletedAt)
+        .sort((a, b) => b.updatedAt - a.updatedAt) ?? null,
+    [rows],
+  );
+
+  const trash = useMemo(
+    () =>
+      rows
+        ?.filter((n) => n.deletedAt)
+        .sort((a, b) => (b.deletedAt ?? 0) - (a.deletedAt ?? 0)) ?? [],
+    [rows],
+  );
 
   useEffect(() => {
     if (!notes) return;
@@ -79,26 +119,43 @@ export function AppShell() {
   }, [activeId]);
 
   const filtered = useMemo(() => {
-    if (!notes) return [];
+    const list = view === "trash" ? trash : (notes ?? []);
     const q = query.trim().toLowerCase();
-    return notes.filter((n) => {
+    return list.filter((n) => {
       if (tagFilter !== "all" && n.tag !== tagFilter) return false;
       if (!q) return true;
-      return (
-        n.title.toLowerCase().includes(q) || n.preview.toLowerCase().includes(q)
-      );
+      return n.title.toLowerCase().includes(q) || noteBodyText(n).includes(q);
     });
-  }, [notes, query, tagFilter]);
+  }, [view, notes, trash, query, tagFilter]);
 
-  const active = notes?.find((n) => n.id === activeId) ?? null;
+  const active =
+    view === "trash"
+      ? (trash.find((n) => n.id === trashId) ?? trash[0] ?? null)
+      : (notes?.find((n) => n.id === activeId) ?? null);
 
   const createNote = useCallback(async () => {
     if (!user) return;
     const note = newNote(user.id, tagFilter === "all" ? "journal" : tagFilter);
     await addNote(note);
+    setView("notes");
     setActiveId(note.id);
     setSidebarOpen(false);
   }, [tagFilter, user]);
+
+  const openToday = useCallback(async () => {
+    if (!user || !notes) return;
+    const title = todayTitle();
+    const existing = notes.find((n) => n.tag === "journal" && n.title === title);
+    if (existing) {
+      setActiveId(existing.id);
+    } else {
+      const note = { ...newNote(user.id, "journal"), title };
+      await addNote(note);
+      setActiveId(note.id);
+    }
+    setView("notes");
+    setSidebarOpen(false);
+  }, [notes, user]);
 
   const removeNote = useCallback(async () => {
     if (!active) return;
@@ -106,19 +163,12 @@ export function AppShell() {
     await softDeleteNote(active.id);
   }, [active]);
 
-  const saveTitle = useCallback((id: string, title: string) => {
-    window.clearTimeout(titleTimer.current);
-    titleTimer.current = window.setTimeout(() => {
-      void saveNoteFields(id, { title });
-    }, 280);
-  }, []);
-
-  const saveBody = useCallback((id: string, content: string, preview: string) => {
-    window.clearTimeout(bodyTimer.current);
-    bodyTimer.current = window.setTimeout(() => {
-      void saveNoteFields(id, { content, preview });
-    }, 280);
-  }, []);
+  const restoreActive = useCallback(async () => {
+    if (!active) return;
+    await restoreNote(active.id);
+    setView("notes");
+    setActiveId(active.id);
+  }, [active]);
 
   const exportNotes = useCallback(async () => {
     if (!user) return;
@@ -195,17 +245,22 @@ export function AppShell() {
         }`}
       >
         <Sidebar
+          view={view}
+          trashCount={trash.length}
           notes={filtered}
-          activeId={activeId}
+          activeId={active?.id ?? null}
           query={query}
           tagFilter={tagFilter}
           onQuery={setQuery}
           onTagFilter={setTagFilter}
           onSelect={(id) => {
-            setActiveId(id);
+            if (view === "trash") setTrashId(id);
+            else setActiveId(id);
             setSidebarOpen(false);
           }}
           onCreate={() => void createNote()}
+          onToday={() => void openToday()}
+          onView={setView}
         />
       </aside>
 
@@ -220,7 +275,7 @@ export function AppShell() {
             >
               <List size={18} />
             </button>
-            {active ? (
+            {active && view === "notes" ? (
               <select
                 aria-label="Note type"
                 value={active.tag}
@@ -271,7 +326,17 @@ export function AppShell() {
                 if (file) void importNotes(file);
               }}
             />
-            {active ? (
+            {active && view === "trash" ? (
+              <button
+                type="button"
+                onClick={() => void restoreActive()}
+                className="inline-flex h-8 items-center gap-1.5 rounded-lg px-2.5 text-[13px] text-muted hover:bg-raised hover:text-ink"
+              >
+                <ArrowCounterClockwise size={15} />
+                Restore
+              </button>
+            ) : null}
+            {active && view === "notes" ? (
               <button
                 type="button"
                 onClick={() => void removeNote()}
@@ -285,14 +350,32 @@ export function AppShell() {
           </div>
         </header>
 
-        {active ? (
+        {active && view === "trash" ? (
+          <article
+            key={`trash:${active.id}`}
+            className="mx-auto flex w-full max-w-[42rem] flex-1 flex-col px-5 pt-8 pb-20 sm:px-8"
+          >
+            <p className="mb-4 text-[12px] text-muted">
+              In Trash. Restore it to edit.
+            </p>
+            <h1 className="text-[1.85rem] leading-[1.2] font-semibold tracking-tight text-ink">
+              {active.title.trim() || "Untitled"}
+            </h1>
+            <NoteBody
+              noteId={active.id}
+              content={active.content || emptyDoc}
+              editable={false}
+              onChange={() => {}}
+            />
+          </article>
+        ) : active ? (
           <article
             key={active.id}
             className="mx-auto flex w-full max-w-[42rem] flex-1 flex-col px-5 pt-8 pb-20 sm:px-8"
           >
             <input
               defaultValue={active.title}
-              onChange={(e) => saveTitle(active.id, e.target.value)}
+              onChange={(e) => queueNoteSave(active.id, { title: e.target.value })}
               placeholder="Title"
               className="w-full bg-transparent text-[1.85rem] leading-[1.2] font-semibold tracking-tight text-ink outline-none placeholder:text-muted/70"
             />
@@ -300,10 +383,14 @@ export function AppShell() {
               noteId={active.id}
               content={active.content || emptyDoc}
               onChange={(content, preview) =>
-                saveBody(active.id, content, preview)
+                queueNoteSave(active.id, { content, preview })
               }
             />
           </article>
+        ) : view === "trash" ? (
+          <div className="mx-auto flex w-full max-w-[42rem] flex-1 flex-col justify-center px-6">
+            <p className="text-[15px] text-muted">Trash is empty.</p>
+          </div>
         ) : (
           <div className="mx-auto flex w-full max-w-[42rem] flex-1 flex-col justify-center px-6">
             <p className="text-[1.6rem] font-semibold tracking-tight">
